@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QComboBox,
     QProgressBar,
+    QLineEdit,
     QSpinBox,
     QSplitter,
     QTabWidget,
@@ -25,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.converter import run_convert
+from core.downloader import download_media
 from core.enhancer import run_enhance
 from core.metadata import run_reveal_metadata, run_strip_metadata
 from core.optimizer import run_optimize
@@ -36,6 +38,7 @@ from core.job import Job
 class MainWindow(QMainWindow):
     ACTIONS = [
         "Convert",
+        "Download",
         "Optimize",
         "Enhance",
         "Metadata",
@@ -76,9 +79,10 @@ class MainWindow(QMainWindow):
 
     TAB_INDEX = {
         "Convert": 0,
-        "Optimize": 1,
-        "Enhance": 2,
-        "Metadata": 3,
+        "Download": 1,
+        "Optimize": 2,
+        "Enhance": 3,
+        "Metadata": 4,
     }
 
     def __init__(self):
@@ -155,16 +159,19 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(self.tabs)
 
         self.convert_tab = QWidget()
+        self.download_tab = QWidget()
         self.optimize_tab = QWidget()
         self.enhance_tab = QWidget()
         self.metadata_tab = QWidget()
 
         self.tabs.addTab(self.convert_tab, "Convert")
+        self.tabs.addTab(self.download_tab, "Download")
         self.tabs.addTab(self.optimize_tab, "Optimize")
         self.tabs.addTab(self.enhance_tab, "Enhance")
         self.tabs.addTab(self.metadata_tab, "Metadata")
 
         self._build_convert_tab()
+        self._build_download_tab()
         self._build_optimize_tab()
         self._build_enhance_tab()
         self._build_metadata_tab()
@@ -208,9 +215,11 @@ class MainWindow(QMainWindow):
         self.enhance_mode_combo.currentTextChanged.connect(self.on_enhance_mode_changed)
         self.preset_combo.currentTextChanged.connect(self.on_preset_changed)
         self.file_list.itemSelectionChanged.connect(self.on_file_selection_changed)
+        self.download_kind_combo.currentTextChanged.connect(self.on_download_kind_changed)
 
         self.refresh_format_options()
         self.refresh_optimize_options()
+        self.refresh_download_options()
         self.on_tab_changed(self.tabs.currentIndex())
 
     def _build_convert_tab(self):
@@ -233,6 +242,50 @@ class MainWindow(QMainWindow):
         line_edit = self.format_combo.lineEdit()
         if line_edit is not None:
             line_edit.setPlaceholderText("Search format (e.g. mp4, webp, pdf)")
+
+        layout.addStretch(1)
+
+    def _build_download_tab(self):
+        layout = QVBoxLayout(self.download_tab)
+
+        self.download_url_label = QLabel("YouTube Link")
+        layout.addWidget(self.download_url_label)
+
+        self.download_url_edit = QLineEdit()
+        self.download_url_edit.setPlaceholderText("Paste a YouTube link here")
+        layout.addWidget(self.download_url_edit)
+
+        self.download_kind_label = QLabel("Download Type")
+        layout.addWidget(self.download_kind_label)
+
+        self.download_kind_combo = QComboBox()
+        self.download_kind_combo.addItems(["Video", "Audio"])
+        layout.addWidget(self.download_kind_combo)
+
+        self.download_format_label = QLabel("Output Format")
+        layout.addWidget(self.download_format_label)
+
+        self.download_format_combo = QComboBox()
+        self.download_format_combo.setEditable(True)
+        self.download_format_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        layout.addWidget(self.download_format_combo)
+
+        self.download_format_model = QStringListModel()
+        self.download_format_completer = QCompleter(self.download_format_model, self)
+        self.download_format_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.download_format_completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        self.download_format_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        self.download_format_combo.setCompleter(self.download_format_completer)
+
+        self.download_quality_label = QLabel("Quality")
+        layout.addWidget(self.download_quality_label)
+
+        self.download_quality_combo = QComboBox()
+        layout.addWidget(self.download_quality_combo)
+
+        self.download_hint_label = QLabel("Paste a link, choose video or audio, then download.")
+        self.download_hint_label.setWordWrap(True)
+        layout.addWidget(self.download_hint_label)
 
         layout.addStretch(1)
 
@@ -393,6 +446,22 @@ class MainWindow(QMainWindow):
 
     def build_jobs(self) -> list[Job]:
         action = self.current_action()
+        if action == "Download":
+            url = self.download_url_edit.text().strip()
+            if not url:
+                return []
+            return [
+                Job(
+                    input_path=url,
+                    action=action,
+                    output_dir=self.output_dir,
+                    download_url=url,
+                    download_kind=self.download_kind_combo.currentText(),
+                    download_format=(self.download_format_combo.currentText().strip().lower() or "mp4"),
+                    download_quality=self.download_quality_combo.currentText(),
+                )
+            ]
+
         selected_format = self.format_combo.currentText().strip().lower()
         output_format = None if not selected_format or selected_format == "Auto" else selected_format
         metadata_mode = self.metadata_mode_combo.currentText()
@@ -438,6 +507,14 @@ class MainWindow(QMainWindow):
         ]
 
     def process_job(self, job: Job) -> str:
+        if job.action == "Download":
+            return download_media(
+                url=job.download_url or job.input_path,
+                output_dir=job.output_dir,
+                download_kind=job.download_kind or "Video",
+                download_format=job.download_format or "mp4",
+                download_quality=job.download_quality or "Best",
+            )
         if job.action == "Convert":
             return run_convert(job.input_path, job.output_dir, job.output_format)
         if job.action == "Optimize":
@@ -470,6 +547,8 @@ class MainWindow(QMainWindow):
             self.refresh_format_options()
         if self.current_action() == "Optimize":
             self.refresh_optimize_options()
+        if self.current_action() == "Download":
+            self.refresh_download_options()
 
     def on_file_selection_changed(self):
         # Aggressive filtering: when specific files are selected, filter options by those files only.
@@ -489,6 +568,10 @@ class MainWindow(QMainWindow):
     def on_enhance_mode_changed(self, mode: str):
         self.update_feature_visibility()
 
+    def on_download_kind_changed(self, kind: str):
+        self.refresh_download_options()
+        self.update_feature_visibility()
+
     def on_preset_changed(self, preset_name: str):
         config = self.PRESET_CONFIG.get(preset_name, self.PRESET_CONFIG["Custom"])
         preset_action = config.get("action")
@@ -500,6 +583,7 @@ class MainWindow(QMainWindow):
                 self.tabs.setCurrentIndex(self.TAB_INDEX[preset_action])
 
         self.refresh_format_options()
+        self.refresh_download_options()
 
         if preset_format and self.current_action() == "Convert":
             available = [self.format_combo.itemText(i) for i in range(self.format_combo.count())]
@@ -592,6 +676,41 @@ class MainWindow(QMainWindow):
         else:
             self.optimize_mode_combo.setCurrentIndex(0)
 
+    def refresh_download_options(self):
+        if self.current_action() != "Download":
+            return
+
+        if self.download_kind_combo.currentText() == "Audio":
+            formats = ["mp3", "m4a", "wav", "flac", "ogg"]
+            qualities = ["Best", "320k", "192k", "128k"]
+        else:
+            formats = ["mp4", "mkv", "webm"]
+            qualities = ["Best", "1080p", "720p", "480p", "360p"]
+
+        current_format = self.download_format_combo.currentText().strip().lower()
+        current_quality = self.download_quality_combo.currentText().strip()
+
+        self.download_format_combo.blockSignals(True)
+        self.download_format_combo.clear()
+        self.download_format_combo.addItems(formats)
+        self.download_format_model.setStringList(formats)
+        self.download_format_combo.blockSignals(False)
+
+        if current_format in formats:
+            self.download_format_combo.setCurrentText(current_format)
+        else:
+            self.download_format_combo.setCurrentIndex(0)
+
+        self.download_quality_combo.blockSignals(True)
+        self.download_quality_combo.clear()
+        self.download_quality_combo.addItems(qualities)
+        self.download_quality_combo.blockSignals(False)
+
+        if current_quality in qualities:
+            self.download_quality_combo.setCurrentText(current_quality)
+        else:
+            self.download_quality_combo.setCurrentIndex(0)
+
     def update_feature_visibility(self):
         detected = {detect_file_type(p) for p in self.files}
         if not detected:
@@ -626,6 +745,7 @@ class MainWindow(QMainWindow):
         self.resize_h_spin.setVisible(action == "Optimize" and show_resize)
 
         enhance_visible = action == "Enhance"
+        download_visible = action == "Download"
         image_modes = {"Sharpen Image", "Denoise Image"}
         is_upscale = enhance_mode == "Upscale Image"
         is_audio_norm = enhance_mode == "Normalize Audio Volume"
@@ -653,6 +773,16 @@ class MainWindow(QMainWindow):
         else:
             self.enhance_hint_label.setVisible(False)
 
+            self.download_url_label.setVisible(download_visible)
+            self.download_url_edit.setVisible(download_visible)
+            self.download_kind_label.setVisible(download_visible)
+            self.download_kind_combo.setVisible(download_visible)
+            self.download_format_label.setVisible(download_visible)
+            self.download_format_combo.setVisible(download_visible)
+            self.download_quality_label.setVisible(download_visible)
+            self.download_quality_combo.setVisible(download_visible)
+            self.download_hint_label.setVisible(download_visible)
+
         # Convert and Metadata tabs already isolate their controls; only the relevant options inside them remain.
         self.format_label.setVisible(action == "Convert")
         self.format_combo.setVisible(action == "Convert")
@@ -664,7 +794,10 @@ class MainWindow(QMainWindow):
     def start_queue(self):
         jobs = self.build_jobs()
         if not jobs:
-            QMessageBox.warning(self, "No files", "Add at least one file.")
+            if self.current_action() == "Download":
+                QMessageBox.warning(self, "No link", "Paste a YouTube link first.")
+            else:
+                QMessageBox.warning(self, "No files", "Add at least one file.")
             return
         if self.worker and self.worker.isRunning():
             QMessageBox.information(self, "Busy", "A queue is already running.")

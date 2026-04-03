@@ -6,6 +6,10 @@ class Job:
     input_path: str
     action: str
     output_dir: str
+    download_url: str | None = None
+    download_kind: str | None = None
+    download_format: str | None = None
+    download_quality: str | None = None
     output_format: str | None = None
     metadata_mode: str | None = None
     optimize_mode: str | None = None

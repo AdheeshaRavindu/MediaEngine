@@ -13,6 +13,7 @@ Phase-1 MVP desktop app using local offline engines.
 - Drag and drop files
 - Detect file type (image/audio/video/pdf/unknown)
 - Batch queue processing
+- YouTube link downloads for video/audio
 - Convert (image/audio/video)
 - Compress (image/video)
 - Strip metadata (via ExifTool)
@@ -27,6 +28,8 @@ Ensure external tools are available in `PATH`:
 - `ffmpeg`
 - `magick`
 - `exiftool`
+
+YouTube downloads use `yt-dlp` and ffmpeg.
 
 ## Run
 ```bash
