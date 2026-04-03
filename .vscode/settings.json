@@ -1,0 +1,7 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+  "chat.tools.terminal.autoApprove": {
+    "git add": true,
+    "git commit": true
+  }
+}
