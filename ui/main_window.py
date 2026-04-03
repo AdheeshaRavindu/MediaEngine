@@ -2,7 +2,7 @@ import os
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QStringListModel
+from PySide6.QtCore import Qt, QSettings, QStringListModel
 from PySide6.QtWidgets import (
     QApplication,
     QCompleter,
@@ -31,7 +31,7 @@ from core.enhancer import run_enhance
 from core.metadata import run_reveal_metadata, run_strip_metadata
 from core.optimizer import run_optimize
 from core.queue_manager import QueueWorker
-from core.utils import detect_file_type
+from core.utils import detect_file_type, is_python_module_available, is_tool_available
 from core.job import Job
 
 
@@ -53,7 +53,6 @@ class MainWindow(QMainWindow):
         "Denoise Image",
         "Upscale Image",
         "Normalize Audio Volume",
-        "Improve Video Resolution (Coming Soon)",
     ]
     VIDEO_PRESETS = [
         ("High Quality", "high_quality"),
@@ -87,21 +86,22 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
+        self.settings = QSettings("MediaEngine", "MediaEngine")
         self.setWindowTitle("MediaEngine")
         self.resize(1100, 700)
         self.setAcceptDrops(True)
 
         self.worker: QueueWorker | None = None
         self.files: list[str] = []
-        self.output_dir = os.getcwd()
+        self.output_dir: str = os.getcwd()
 
         root = QWidget()
         self.setCentralWidget(root)
 
         main_layout = QVBoxLayout(root)
 
-        split = QSplitter(Qt.Orientation.Horizontal)
-        main_layout.addWidget(split)
+        self.split = QSplitter(Qt.Orientation.Horizontal)
+        main_layout.addWidget(self.split)
 
         # Center panel
         center = QWidget()
@@ -144,7 +144,7 @@ class MainWindow(QMainWindow):
         center_btns.addWidget(self.btn_clear)
         center_layout.addLayout(center_btns)
 
-        split.addWidget(center)
+        self.split.addWidget(center)
 
         # Right panel
         right = QWidget()
@@ -185,22 +185,29 @@ class MainWindow(QMainWindow):
         self.btn_output = QPushButton("Choose Output Folder")
         right_layout.addWidget(self.btn_output)
 
+        self.runtime_status_label = QLabel()
+        self.runtime_status_label.setWordWrap(True)
+        self.runtime_status_label.setStyleSheet("font-size: 12px; color: #d0d0d0;")
+        right_layout.addWidget(self.runtime_status_label)
+
         right_layout.addWidget(QLabel("Logs"))
         self.log_box = QTextEdit()
         self.log_box.setReadOnly(True)
         right_layout.addWidget(self.log_box)
 
-        split.addWidget(right)
-        split.setSizes([700, 400])
+        self.split.addWidget(right)
+        self.split.setSizes([700, 400])
 
         # Bottom queue actions
         bottom = QHBoxLayout()
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
+        self.status_label = QLabel("Ready")
         self.btn_start = QPushButton("Start")
         self.btn_cancel = QPushButton("Cancel")
         bottom.addWidget(self.progress)
+        bottom.addWidget(self.status_label)
         bottom.addWidget(self.btn_start)
         bottom.addWidget(self.btn_cancel)
         main_layout.addLayout(bottom)
@@ -220,6 +227,8 @@ class MainWindow(QMainWindow):
         self.refresh_format_options()
         self.refresh_optimize_options()
         self.refresh_download_options()
+        self.refresh_runtime_status()
+        self.load_settings()
         self.on_tab_changed(self.tabs.currentIndex())
 
     def _build_convert_tab(self):
@@ -371,6 +380,80 @@ class MainWindow(QMainWindow):
 
         layout.addStretch(1)
 
+    def refresh_runtime_status(self):
+        checks = [
+            ("ffmpeg", is_tool_available("ffmpeg")),
+            ("ImageMagick", is_tool_available("magick")),
+            ("ExifTool", is_tool_available("exiftool")),
+            ("yt-dlp", is_python_module_available("yt_dlp")),
+        ]
+        missing = [name for name, ok in checks if not ok]
+        if missing:
+            self.runtime_status_label.setText("Missing runtime dependencies: " + ", ".join(missing))
+            self.runtime_status_label.setStyleSheet("font-size: 12px; color: #ffb3b3;")
+        else:
+            self.runtime_status_label.setText("Runtime dependencies detected: ffmpeg, ImageMagick, ExifTool, yt-dlp")
+            self.runtime_status_label.setStyleSheet("font-size: 12px; color: #bff0bf;")
+
+    def load_settings(self):
+        output_dir_value = self.settings.value("output_dir", self.output_dir)
+        if isinstance(output_dir_value, str) and output_dir_value:
+            self.output_dir = output_dir_value
+        self.output_label.setText(self.output_dir)
+
+        preset = self.settings.value("preset", self.preset_combo.currentText())
+        if isinstance(preset, str) and preset in self.PRESETS:
+            self.preset_combo.setCurrentText(preset)
+
+        download_kind = self.settings.value("download_kind", self.download_kind_combo.currentText())
+        if isinstance(download_kind, str) and download_kind in [self.download_kind_combo.itemText(i) for i in range(self.download_kind_combo.count())]:
+            self.download_kind_combo.setCurrentText(download_kind)
+
+        convert_format = self.settings.value("convert_format", self.format_combo.currentText())
+        if isinstance(convert_format, str) and convert_format:
+            self.format_combo.setCurrentText(convert_format)
+
+        optimize_mode = self.settings.value("optimize_mode", self.optimize_mode_combo.currentText())
+        if isinstance(optimize_mode, str) and optimize_mode:
+            self.optimize_mode_combo.setCurrentText(optimize_mode)
+
+        enhance_mode = self.settings.value("enhance_mode", self.enhance_mode_combo.currentText())
+        if isinstance(enhance_mode, str) and enhance_mode in [self.enhance_mode_combo.itemText(i) for i in range(self.enhance_mode_combo.count())]:
+            self.enhance_mode_combo.setCurrentText(enhance_mode)
+
+        metadata_mode = self.settings.value("metadata_mode", self.metadata_mode_combo.currentText())
+        if isinstance(metadata_mode, str) and metadata_mode in [self.metadata_mode_combo.itemText(i) for i in range(self.metadata_mode_combo.count())]:
+            self.metadata_mode_combo.setCurrentText(metadata_mode)
+
+        download_format = self.settings.value("download_format", self.download_format_combo.currentText())
+        if isinstance(download_format, str) and download_format:
+            self.download_format_combo.setCurrentText(download_format)
+
+        download_quality = self.settings.value("download_quality", self.download_quality_combo.currentText())
+        if isinstance(download_quality, str) and download_quality:
+            self.download_quality_combo.setCurrentText(download_quality)
+
+        tab_value = self.settings.value("active_tab", self.tabs.currentIndex())
+        tab_index = int(tab_value) if isinstance(tab_value, (int, str)) else self.tabs.currentIndex()
+        tab_index = max(0, min(tab_index, self.tabs.count() - 1))
+        self.tabs.setCurrentIndex(tab_index)
+
+    def save_settings(self):
+        self.settings.setValue("output_dir", self.output_dir)
+        self.settings.setValue("active_tab", self.tabs.currentIndex())
+        self.settings.setValue("preset", self.preset_combo.currentText())
+        self.settings.setValue("download_kind", self.download_kind_combo.currentText())
+        self.settings.setValue("download_format", self.download_format_combo.currentText())
+        self.settings.setValue("download_quality", self.download_quality_combo.currentText())
+        self.settings.setValue("convert_format", self.format_combo.currentText())
+        self.settings.setValue("optimize_mode", self.optimize_mode_combo.currentText())
+        self.settings.setValue("enhance_mode", self.enhance_mode_combo.currentText())
+        self.settings.setValue("metadata_mode", self.metadata_mode_combo.currentText())
+
+    def closeEvent(self, event):
+        self.save_settings()
+        super().closeEvent(event)
+
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
@@ -426,6 +509,7 @@ class MainWindow(QMainWindow):
         if selected:
             self.output_dir = selected
             self.output_label.setText(selected)
+            self.save_settings()
 
     def current_action(self) -> str:
         return self.tabs.tabText(self.tabs.currentIndex())
@@ -435,6 +519,56 @@ class MainWindow(QMainWindow):
         if selected_items:
             return [item.data(Qt.ItemDataRole.UserRole) for item in selected_items]
         return list(self.files)
+
+    def validate_queue_inputs(self, jobs: list[Job]) -> str | None:
+        output_path = Path(self.output_dir)
+        if not output_path.exists():
+            return "Choose an existing output folder."
+        if not os.access(self.output_dir, os.W_OK):
+            return "The chosen output folder is not writable."
+        if not jobs:
+            return "Nothing is ready to process."
+
+        for job in jobs:
+            if job.action == "Download":
+                if not job.download_url:
+                    return "Paste a YouTube link first."
+                if not is_python_module_available("yt_dlp"):
+                    return "yt-dlp is missing from the active Python environment."
+                allowed_formats = {"mp4", "mkv", "webm"} if job.download_kind == "Video" else {"mp3", "m4a", "wav", "flac", "ogg"}
+                allowed_qualities = {"Best", "1080p", "720p", "480p", "360p"} if job.download_kind == "Video" else {"Best", "320k", "192k", "128k"}
+                if job.download_format and job.download_format not in allowed_formats:
+                    return f"Unsupported download format: {job.download_format}"
+                if job.download_quality and job.download_quality not in allowed_qualities:
+                    return f"Unsupported download quality: {job.download_quality}"
+                continue
+
+            file_type = detect_file_type(job.input_path)
+            if file_type == "unknown":
+                return f"Unsupported file type: {Path(job.input_path).name}"
+
+            if job.action == "Convert":
+                target_format = (job.output_format or "").strip().lower()
+                if target_format and target_format != "auto":
+                    if target_format not in self.allowed_formats_for_type(file_type):
+                        return f"{Path(job.input_path).name} cannot be converted to {target_format}."
+            elif job.action == "Optimize":
+                if job.optimize_mode == "compress" and file_type not in {"image", "video"}:
+                    return f"Compress supports image/video files only: {Path(job.input_path).name}"
+                if job.optimize_mode == "pdf_reduce" and file_type != "pdf":
+                    return f"Reduce PDF size supports PDF files only: {Path(job.input_path).name}"
+                if job.optimize_mode == "resize" and file_type not in {"image", "video"}:
+                    return f"Resize supports image/video files only: {Path(job.input_path).name}"
+            elif job.action == "Enhance":
+                if job.enhance_mode in {"Sharpen Image", "Denoise Image", "Upscale Image"} and file_type != "image":
+                    return f"{job.enhance_mode} supports image files only: {Path(job.input_path).name}"
+                if job.enhance_mode == "Normalize Audio Volume" and file_type not in {"audio", "video"}:
+                    return f"Normalize audio volume supports audio/video files only: {Path(job.input_path).name}"
+            elif job.action == "Metadata":
+                if file_type == "unknown":
+                    return f"Metadata tools do not support this file: {Path(job.input_path).name}"
+
+        return None
 
     def allowed_formats_for_type(self, source_type: str) -> set[str]:
         if source_type in {"image", "pdf"}:
@@ -506,7 +640,7 @@ class MainWindow(QMainWindow):
             for p in self.files
         ]
 
-    def process_job(self, job: Job) -> str:
+    def process_job(self, job: Job, progress_callback=None) -> str:
         if job.action == "Download":
             return download_media(
                 url=job.download_url or job.input_path,
@@ -514,6 +648,7 @@ class MainWindow(QMainWindow):
                 download_kind=job.download_kind or "Video",
                 download_format=job.download_format or "mp4",
                 download_quality=job.download_quality or "Best",
+                progress_callback=progress_callback,
             )
         if job.action == "Convert":
             return run_convert(job.input_path, job.output_dir, job.output_format)
@@ -749,7 +884,6 @@ class MainWindow(QMainWindow):
         image_modes = {"Sharpen Image", "Denoise Image"}
         is_upscale = enhance_mode == "Upscale Image"
         is_audio_norm = enhance_mode == "Normalize Audio Volume"
-        is_video_later = enhance_mode == "Improve Video Resolution (Coming Soon)"
 
         self.enhance_mode_label.setVisible(enhance_visible)
         self.enhance_mode_combo.setVisible(enhance_visible)
@@ -766,9 +900,6 @@ class MainWindow(QMainWindow):
             self.enhance_hint_label.setVisible(True)
         elif enhance_visible and is_audio_norm and not ({"audio", "video"} & detected):
             self.enhance_hint_label.setText("Normalize audio volume requires audio/video files.")
-            self.enhance_hint_label.setVisible(True)
-        elif enhance_visible and is_video_later:
-            self.enhance_hint_label.setText("Improve Video Resolution will be added later.")
             self.enhance_hint_label.setVisible(True)
         else:
             self.enhance_hint_label.setVisible(False)
@@ -793,11 +924,9 @@ class MainWindow(QMainWindow):
 
     def start_queue(self):
         jobs = self.build_jobs()
-        if not jobs:
-            if self.current_action() == "Download":
-                QMessageBox.warning(self, "No link", "Paste a YouTube link first.")
-            else:
-                QMessageBox.warning(self, "No files", "Add at least one file.")
+        error_message = self.validate_queue_inputs(jobs)
+        if error_message:
+            QMessageBox.warning(self, "Cannot start queue", error_message)
             return
         if self.worker and self.worker.isRunning():
             QMessageBox.information(self, "Busy", "A queue is already running.")
@@ -805,7 +934,10 @@ class MainWindow(QMainWindow):
 
         self.progress.setRange(0, len(jobs))
         self.progress.setValue(0)
+        self.status_label.setText("Queue starting...")
         self.worker = QueueWorker(jobs, self.process_job)
+        self.worker.job_started.connect(self.on_job_started)
+        self.worker.job_progress.connect(self.on_job_progress)
         self.worker.progress.connect(self.on_progress)
         self.worker.log.connect(self.log)
         self.worker.job_done.connect(self.on_job_done)
@@ -822,12 +954,20 @@ class MainWindow(QMainWindow):
         self.progress.setMaximum(total)
         self.progress.setValue(done)
 
+    def on_job_started(self, index: int, total: int, action: str, input_path: str):
+        name = input_path if action == "Download" else Path(input_path).name
+        self.status_label.setText(f"{action} {index}/{total}: {name}")
+
+    def on_job_progress(self, message: str):
+        self.status_label.setText(message)
+
     def on_job_done(self, input_path: str, ok: bool, detail: str):
         name = Path(input_path).name
         status = "OK" if ok else "FAIL"
         self.log(f"{status}: {name} -> {detail}")
 
     def on_finished_summary(self, success: int, failed: int):
+        self.status_label.setText("Queue finished")
         QMessageBox.information(self, "Queue finished", f"Success: {success} | Failed: {failed}")
 
     def log(self, text: str):

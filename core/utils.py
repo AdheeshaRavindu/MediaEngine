@@ -1,6 +1,8 @@
 import os
+import importlib.util
 import shutil
 import sys
+import re
 from pathlib import Path
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".tif"}
@@ -19,6 +21,44 @@ def detect_file_type(path: str) -> str:
     if ext == ".pdf":
         return "pdf"
     return "unknown"
+
+
+def sanitize_filename(name: str) -> str:
+    cleaned = re.sub(r"[<>:\"/\\|?*]+", "_", name).strip().strip(".")
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    if not cleaned:
+        return "output"
+    if cleaned.upper() in {"CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"}:
+        return f"_{cleaned}"
+    return cleaned
+
+
+def unique_path(path: str) -> str:
+    candidate = Path(path)
+    if not candidate.exists():
+        return str(candidate)
+
+    stem = candidate.stem
+    suffix = candidate.suffix
+    parent = candidate.parent
+    counter = 1
+
+    while True:
+        next_candidate = parent / f"{stem}_{counter}{suffix}"
+        if not next_candidate.exists():
+            return str(next_candidate)
+        counter += 1
+
+
+def is_tool_available(tool_name: str) -> bool:
+    candidate = get_tool_path(tool_name)
+    if candidate != tool_name and Path(candidate).exists():
+        return True
+    return shutil.which(tool_name) is not None
+
+
+def is_python_module_available(module_name: str) -> bool:
+    return importlib.util.find_spec(module_name) is not None
 
 
 def get_tool_path(tool_name: str) -> str:
@@ -47,4 +87,5 @@ def get_tool_path(tool_name: str) -> str:
 def build_output_path(input_path: str, output_dir: str, suffix: str, new_ext: str | None = None) -> str:
     src = Path(input_path)
     ext = new_ext if new_ext else src.suffix
-    return str(Path(output_dir) / f"{src.stem}{suffix}{ext}")
+    base_name = sanitize_filename(src.stem)
+    return unique_path(str(Path(output_dir) / f"{base_name}{suffix}{ext}"))

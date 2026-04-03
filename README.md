@@ -30,11 +30,16 @@ Ensure external tools are available in `PATH`:
 - `exiftool`
 
 YouTube downloads use `yt-dlp` and ffmpeg.
+The app now performs a startup health check for those dependencies and shows missing items in the UI.
 
 ## Run
 ```bash
 python app.py
 ```
+
+The app remembers the last output folder, selected tab, and commonly used queue settings between launches.
+
+Outputs are automatically collision-safe, so repeated runs will create unique filenames instead of overwriting existing exports.
 
 ## Project Layout
 ```

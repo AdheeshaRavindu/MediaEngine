@@ -7,6 +7,8 @@ from core.job import Job
 
 class QueueWorker(QThread):
     progress = Signal(int, int)
+    job_started = Signal(int, int, str, str)
+    job_progress = Signal(str)
     log = Signal(str)
     job_done = Signal(str, bool, str)
     finished_summary = Signal(int, int)
@@ -30,8 +32,9 @@ class QueueWorker(QThread):
                 self.log.emit("Cancelled by user")
                 break
             try:
+                self.job_started.emit(idx, total, job.action, job.input_path)
                 self.log.emit(f"Running {job.action}: {job.input_path}")
-                out_path = self._processor(job)
+                out_path = self._processor(job, progress_callback=self.job_progress.emit)
                 success += 1
                 self.job_done.emit(job.input_path, True, out_path)
             except Exception as exc:
