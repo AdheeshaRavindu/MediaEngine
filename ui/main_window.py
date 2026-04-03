@@ -48,6 +48,8 @@ class MainWindow(QMainWindow):
     AUDIO_FORMATS = ["mp3", "wav", "aac", "flac", "ogg", "m4a"]
     VIDEO_FORMATS = ["mp4", "mkv", "avi", "mov", "webm"]
     DOCUMENT_FORMATS = ["doc", "docx", "docm", "dot", "dotx", "dotm", "rtf", "odt"]
+    DOCX2PDF_COMPATIBLE_FORMATS = {"doc", "docx", "docm", "dot", "dotx", "dotm", "rtf"}
+    DOCX_BASIC_PDF_COMPATIBLE_FORMATS = {"docx"}
     OPTIMIZE_MODES = ["Compress", "Reduce PDF Size", "Batch Resize"]
     ENHANCE_MODES = [
         "Sharpen Image",
@@ -569,15 +571,29 @@ class MainWindow(QMainWindow):
                             return "LibreOffice is required for Word to image conversion."
                     if file_type == "document" and target_format == "pdf":
                         has_libreoffice = is_tool_available("soffice") or is_tool_available("libreoffice")
-                        if not has_libreoffice and not is_python_module_available("docx2pdf"):
-                            return "Install LibreOffice, or install docx2pdf (with Microsoft Word) for DOCX to PDF."
+                        source_ext = Path(job.input_path).suffix.lower().lstrip(".")
+                        supports_docx2pdf = source_ext in self.DOCX2PDF_COMPATIBLE_FORMATS
+                        supports_basic_docx = source_ext in self.DOCX_BASIC_PDF_COMPATIBLE_FORMATS
+                        has_docx2pdf = is_python_module_available("docx2pdf")
+                        has_basic_stack = is_python_module_available("docx") and is_python_module_available("reportlab")
+                        if not has_libreoffice and not ((supports_docx2pdf and has_docx2pdf) or (supports_basic_docx and has_basic_stack)):
+                            if not supports_docx2pdf:
+                                return f"{source_ext.upper()} to PDF requires LibreOffice."
+                            return "Install LibreOffice, or enable DOCX fallback: docx2pdf (with Microsoft Word) or python-docx + reportlab (.docx only)."
                     if file_type in {"image", "pdf"} and target_format == "docx":
                         if not is_python_module_available("docx"):
                             return "python-docx is required for image or PDF to Word conversion."
                 elif file_type == "document":
                     has_libreoffice = is_tool_available("soffice") or is_tool_available("libreoffice")
-                    if not has_libreoffice and not is_python_module_available("docx2pdf"):
-                        return "Word to PDF requires LibreOffice, or docx2pdf with Microsoft Word."
+                    source_ext = Path(job.input_path).suffix.lower().lstrip(".")
+                    supports_docx2pdf = source_ext in self.DOCX2PDF_COMPATIBLE_FORMATS
+                    supports_basic_docx = source_ext in self.DOCX_BASIC_PDF_COMPATIBLE_FORMATS
+                    has_docx2pdf = is_python_module_available("docx2pdf")
+                    has_basic_stack = is_python_module_available("docx") and is_python_module_available("reportlab")
+                    if not has_libreoffice and not ((supports_docx2pdf and has_docx2pdf) or (supports_basic_docx and has_basic_stack)):
+                        if not supports_docx2pdf:
+                            return f"{source_ext.upper()} to PDF requires LibreOffice."
+                        return "Word to PDF requires LibreOffice, docx2pdf (with Word), or python-docx + reportlab for .docx."
             elif job.action == "Optimize":
                 if job.optimize_mode == "compress" and file_type not in {"image", "video"}:
                     return f"Compress supports image/video files only: {Path(job.input_path).name}"
@@ -625,7 +641,7 @@ class MainWindow(QMainWindow):
             ]
 
         selected_format = self.format_combo.currentText().strip().lower()
-        output_format = None if not selected_format or selected_format == "Auto" else selected_format
+        output_format = None if not selected_format or selected_format == "auto" else selected_format
         metadata_mode = self.metadata_mode_combo.currentText()
         enhance_mode = self.enhance_mode_combo.currentText()
         enhance_strength = self.enhance_strength_spin.value()
@@ -774,7 +790,7 @@ class MainWindow(QMainWindow):
 
         paths = self.selected_or_all_paths()
         detected = [detect_file_type(p) for p in paths if p]
-        detected = [t for t in detected if t in {"image", "audio", "video", "pdf"}]
+        detected = [t for t in detected if t in {"image", "audio", "video", "pdf", "document"}]
 
         if not detected:
             detected = ["image", "audio", "video", "pdf"]
@@ -792,6 +808,13 @@ class MainWindow(QMainWindow):
             # If no intersection exists for mixed file families, fall back to the first family
             # so the dropdown remains useful while still narrowed.
             common = allowed_sets[0]
+
+        # Filter formats for document input based on available tools/modules
+        if "document" in detected and len(detected) == 1:
+            has_libreoffice = is_tool_available("soffice") or is_tool_available("libreoffice")
+            if not has_libreoffice:
+                # Without LibreOffice, only PDF is available (via fallback paths)
+                common = {"pdf"} & common
 
         ordered_pool = self.IMAGE_FORMATS + self.AUDIO_FORMATS + self.VIDEO_FORMATS + self.DOCUMENT_FORMATS
         options.extend([fmt for fmt in ordered_pool if fmt in common])

@@ -3,7 +3,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from core.utils import build_output_folder, build_output_path, detect_file_type, get_tool_path, is_tool_available
+from core.utils import build_output_folder, build_output_path, detect_file_type, get_tool_path, is_python_module_available, is_tool_available
 from engines import ffmpeg_wrapper, imagemagick_wrapper
 
 
@@ -13,6 +13,7 @@ AUDIO_FORMATS = {"mp3", "wav", "aac", "flac", "ogg", "m4a"}
 DOCUMENT_FORMATS = {"doc", "docx", "docm", "dot", "dotx", "dotm", "rtf", "odt"}
 DOC_IMAGE_FORMATS = {"png", "jpg", "jpeg", "webp", "bmp", "tiff", "tif"}
 DOCX2PDF_COMPATIBLE_FORMATS = {"doc", "docx", "docm", "dot", "dotx", "dotm", "rtf"}
+DOCX_BASIC_PDF_COMPATIBLE_FORMATS = {"docx"}
 
 
 def _load_fitz():
@@ -30,6 +31,8 @@ def _normalize_ext(fmt: str | None) -> str | None:
     if not fmt:
         return None
     value = fmt.strip().lower()
+    if value == "auto":
+        return None
     if value.startswith("."):
         value = value[1:]
     return value or None
@@ -87,8 +90,8 @@ def _convert_with_docx2pdf(input_path: str, output_dir: str) -> str:
     source_ext = Path(input_path).suffix.lower().lstrip(".")
     if source_ext not in DOCX2PDF_COMPATIBLE_FORMATS:
         raise RuntimeError(
-            "LibreOffice is required for this document type. "
-            "docx2pdf fallback supports Word-compatible formats only."
+            f"This .{source_ext} file needs LibreOffice for PDF export. "
+            "docx2pdf fallback supports DOC/DOCX/DOCM/DOT/DOTX/DOTM/RTF with Microsoft Word."
         )
 
     output_path = build_output_path(input_path, output_dir, "_converted", ".pdf")
@@ -101,6 +104,61 @@ def _convert_with_docx2pdf(input_path: str, output_dir: str) -> str:
 
     if not Path(output_path).exists():
         raise RuntimeError("DOCX to PDF fallback did not produce an output file")
+
+    return output_path
+
+
+def _convert_docx_to_pdf_basic(input_path: str, output_dir: str) -> str:
+    try:
+        from docx import Document
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "python-docx is required for basic DOCX to PDF fallback. "
+            "Run: py -m pip install python-docx"
+        ) from exc
+
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfgen import canvas
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "reportlab is required for basic DOCX to PDF fallback. "
+            "Run: py -m pip install reportlab"
+        ) from exc
+
+    doc = Document(input_path)
+    output_path = build_output_path(input_path, output_dir, "_converted", ".pdf")
+
+    pdf = canvas.Canvas(output_path, pagesize=A4)
+    page_width, page_height = A4
+    margin = 48
+    line_height = 14
+    max_chars = 105
+    y = page_height - margin
+
+    for paragraph in doc.paragraphs:
+        text = paragraph.text.strip()
+        if not text:
+            y -= line_height
+            if y <= margin:
+                pdf.showPage()
+                y = page_height - margin
+            continue
+
+        remaining = text
+        while remaining:
+            line = remaining[:max_chars]
+            remaining = remaining[max_chars:]
+            pdf.drawString(margin, y, line)
+            y -= line_height
+            if y <= margin:
+                pdf.showPage()
+                y = page_height - margin
+
+    pdf.save()
+
+    if not Path(output_path).exists():
+        raise RuntimeError("Basic DOCX to PDF fallback did not produce an output file")
 
     return output_path
 
@@ -190,9 +248,22 @@ def run_convert(input_path: str, output_dir: str, output_format: str | None = No
         if target_ext is None:
             target_ext = "pdf"
         if target_ext == "pdf":
+            source_ext = Path(input_path).suffix.lower().lstrip(".")
             if is_tool_available("soffice") or is_tool_available("libreoffice"):
                 return _convert_with_office(input_path, output_dir, target_ext)
-            return _convert_with_docx2pdf(input_path, output_dir)
+            if source_ext in DOCX2PDF_COMPATIBLE_FORMATS and is_python_module_available("docx2pdf"):
+                try:
+                    return _convert_with_docx2pdf(input_path, output_dir)
+                except RuntimeError:
+                    # If Word automation fails, fall back to basic text export for .docx.
+                    if source_ext in DOCX_BASIC_PDF_COMPATIBLE_FORMATS and is_python_module_available("docx") and is_python_module_available("reportlab"):
+                        return _convert_docx_to_pdf_basic(input_path, output_dir)
+                    raise
+            if source_ext in DOCX_BASIC_PDF_COMPATIBLE_FORMATS and is_python_module_available("docx") and is_python_module_available("reportlab"):
+                return _convert_docx_to_pdf_basic(input_path, output_dir)
+            raise RuntimeError(
+                "DOCX to PDF requires one of: LibreOffice, docx2pdf (with Microsoft Word), or basic fallback (python-docx + reportlab for .docx)."
+            )
         if target_ext in DOCUMENT_FORMATS:
             return _convert_with_office(input_path, output_dir, target_ext)
         if target_ext in DOC_IMAGE_FORMATS:
