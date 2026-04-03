@@ -1,7 +1,7 @@
 import sys
 import subprocess
 from pathlib import Path
-from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel, QListWidget, QPushButton, QHBoxLayout, QAbstractItemView, QProgressBar
+from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel, QListWidget, QPushButton, QHBoxLayout, QAbstractItemView, QProgressBar, QMessageBox
 from PySide6.QtCore import Qt, Signal, QThread
 
 
@@ -9,6 +9,7 @@ class Worker(QThread):
 	progress = Signal(int)
 	set_max = Signal(int)
 	status = Signal(str)
+	error = Signal(str)
 	finished = Signal()
 
 	def __init__(self, queue):
@@ -38,17 +39,22 @@ class Worker(QThread):
 			self.status.emit(f"Processing: {Path(path).name}")
 			try:
 				if action == "convert":
-					convert_file(path)
+					success, msg = convert_file(path)
 				elif action == "compress":
-					compress_image(path)
+					success, msg = compress_image(path)
 				elif action == "view_metadata":
-					view_metadata(path)
+					success, msg = view_metadata(path)
 				elif action == "remove_metadata":
-					remove_metadata(path)
+					success, msg = remove_metadata(path)
 				else:
 					print(f"Unknown action: {action} for {path}")
+					success, msg = True, ""
 			except Exception as exc:
 				print(f"Error processing {path}: {exc}")
+				success, msg = False, str(exc)
+			if not success:
+				# emit error message to main thread for popup
+				self.error.emit(msg)
 			processed += 1
 			self.progress.emit(processed)
 			# check cancellation after finishing current job
@@ -72,9 +78,14 @@ def convert_file(input_path):
 			text=True,
 		)
 		print(f"Success: {output_file}")
+		return True, f"Success: {output_file}"
 	except subprocess.CalledProcessError as exc:
 		error_message = (exc.stderr or str(exc)).strip()
 		print(f"Error: {error_message}")
+		return False, error_message
+	except FileNotFoundError as exc:
+		print(f"Error: {exc}")
+		return False, str(exc)
 
 
 def compress_image(input_path):
@@ -90,11 +101,14 @@ def compress_image(input_path):
 			text=True,
 		)
 		print(f"Success: {output_file}")
+		return True, f"Success: {output_file}"
 	except subprocess.CalledProcessError as exc:
 		error_message = (exc.stderr or str(exc)).strip()
 		print(f"Error: {error_message}")
+		return False, error_message
 	except FileNotFoundError as exc:
 		print(f"Error: {exc}")
+		return False, str(exc)
 
 
 def view_metadata(input_path):
@@ -114,12 +128,16 @@ def view_metadata(input_path):
 			print(output)
 		else:
 			print("No metadata output returned")
+		return True, output
 	except subprocess.CalledProcessError as exc:
 		error_message = (exc.stderr or str(exc)).strip()
 		print(f"Error: {error_message}")
+		return False, error_message
 	except FileNotFoundError as exc:
 		print(f"Error: {exc}")
-	print("-" * 60)
+		return False, str(exc)
+	finally:
+		print("-" * 60)
 
 
 def remove_metadata(input_path):
@@ -133,11 +151,14 @@ def remove_metadata(input_path):
 			text=True,
 		)
 		print("Success")
+		return True, "Success"
 	except subprocess.CalledProcessError as exc:
 		error_message = (exc.stderr or str(exc)).strip()
 		print(f"Error: {error_message}")
+		return False, error_message
 	except FileNotFoundError as exc:
 		print(f"Error: {exc}")
+		return False, str(exc)
 
 
 class DropWindow(QWidget):
@@ -243,6 +264,7 @@ class DropWindow(QWidget):
 		self.worker.progress.connect(lambda v: self.progress_bar.setValue(v))
 		self.worker.set_max.connect(lambda m: self.progress_bar.setMaximum(m))
 		self.worker.status.connect(lambda s: self.status_label.setText(s))
+		self.worker.error.connect(lambda m: QMessageBox.critical(self, "Error", m))
 		self.worker.finished.connect(self._on_worker_finished)
 		self.worker.start()
 
