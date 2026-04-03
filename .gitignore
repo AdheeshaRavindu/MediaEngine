@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+build/
+dist/
+New Text Document.txt

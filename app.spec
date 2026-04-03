@@ -4,7 +4,7 @@
 a = Analysis(
     ['app.py'],
     pathex=[],
-    binaries=[],
+    binaries=[('X:\\ffmpeg-2026-04-01-git-eedf8f0165-full_build\\ffmpeg-2026-04-01-git-eedf8f0165-full_build\\bin\\ffmpeg.exe', '.'), ('C:\\Program Files\\ImageMagick-7.1.2-Q16-HDRI\\magick.exe', '.'), ('C:\\Users\\Admin\\AppData\\Local\\Programs\\ExifTool\\ExifTool.exe', '.')],
     datas=[],
     hiddenimports=[],
     hookspath=[],
