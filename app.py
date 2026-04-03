@@ -1,6 +1,24 @@
 import sys
 import subprocess
+import os
 from pathlib import Path
+
+
+def get_tool_path(tool_name: str) -> str:
+	"""Return the executable name or the bundled path when running as a PyInstaller EXE.
+
+	If the application is running from a PyInstaller onefile bundle, sys._MEIPASS
+	points to the temporary folder where bundled files are extracted. Look there
+	first for a platform-specific executable (adds .exe on Windows).
+	"""
+	base = getattr(sys, "_MEIPASS", None)
+	if base:
+		exe_name = tool_name + (".exe" if os.name == "nt" else "")
+		candidate = os.path.join(base, exe_name)
+		if os.path.exists(candidate):
+			return candidate
+	# fallback to the tool name (rely on PATH)
+	return tool_name
 from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel, QListWidget, QPushButton, QHBoxLayout, QAbstractItemView, QProgressBar, QMessageBox
 from PySide6.QtCore import Qt, Signal, QThread
 
@@ -10,6 +28,7 @@ class Worker(QThread):
 	set_max = Signal(int)
 	status = Signal(str)
 	error = Signal(str)
+	finished_summary = Signal(int, int)
 	finished = Signal()
 
 	def __init__(self, queue):
@@ -24,6 +43,8 @@ class Worker(QThread):
 
 	def run(self):
 		processed = 0
+		success_count = 0
+		fail_count = 0
 		# initial maximum
 		self.set_max.emit(len(self.queue) if len(self.queue) > 0 else 1)
 		while True:
@@ -52,8 +73,11 @@ class Worker(QThread):
 			except Exception as exc:
 				print(f"Error processing {path}: {exc}")
 				success, msg = False, str(exc)
-			if not success:
-				# emit error message to main thread for popup
+			if success:
+				success_count += 1
+			else:
+				fail_count += 1
+				# emit error message to main thread for popup (per-file)
 				self.error.emit(msg)
 			processed += 1
 			self.progress.emit(processed)
@@ -61,7 +85,8 @@ class Worker(QThread):
 			if self.is_cancelled:
 				self.status.emit("Cancelled")
 				break
-		# signal finished
+		# emit final summary and finished
+		self.finished_summary.emit(success_count, fail_count)
 		self.finished.emit()
 
 
@@ -72,7 +97,7 @@ def convert_file(input_path):
 	print(f"Converting: {input_path}")
 	try:
 		subprocess.run(
-			["ffmpeg", "-y", "-i", str(input_file), str(output_file)],
+			[get_tool_path("ffmpeg"), "-y", "-i", str(input_file), str(output_file)],
 			check=True,
 			capture_output=True,
 			text=True,
@@ -95,7 +120,7 @@ def compress_image(input_path):
 	print(f"Compressing: {input_path}")
 	try:
 		subprocess.run(
-			["magick", str(input_file), "-quality", "80", str(output_file)],
+			[get_tool_path("magick"), str(input_file), "-quality", "80", str(output_file)],
 			check=True,
 			capture_output=True,
 			text=True,
@@ -118,7 +143,7 @@ def view_metadata(input_path):
 	print("-" * 60)
 	try:
 		result = subprocess.run(
-			["exiftool", str(input_file)],
+			[get_tool_path("exiftool"), str(input_file)],
 			check=True,
 			capture_output=True,
 			text=True,
@@ -145,7 +170,7 @@ def remove_metadata(input_path):
 	print(f"Cleaning metadata: {input_file}")
 	try:
 		subprocess.run(
-			["exiftool", "-all=", "-overwrite_original", str(input_file)],
+			[get_tool_path("exiftool"), "-all=", "-overwrite_original", str(input_file)],
 			check=True,
 			capture_output=True,
 			text=True,
@@ -265,6 +290,7 @@ class DropWindow(QWidget):
 		self.worker.set_max.connect(lambda m: self.progress_bar.setMaximum(m))
 		self.worker.status.connect(lambda s: self.status_label.setText(s))
 		self.worker.error.connect(lambda m: QMessageBox.critical(self, "Error", m))
+		self.worker.finished_summary.connect(self._on_worker_finished_summary)
 		self.worker.finished.connect(self._on_worker_finished)
 		self.worker.start()
 
@@ -276,8 +302,6 @@ class DropWindow(QWidget):
 			self.status_label.setText("Cancelled")
 		else:
 			self.status_label.setText("Done")
-			# show success popup
-			QMessageBox.information(self, "Success", "Operation completed successfully")
 		QApplication.processEvents()
 		# reset progress
 		self.progress_bar.setValue(0)
@@ -362,6 +386,12 @@ class DropWindow(QWidget):
 		# no active worker
 		self.status_label.setText('No active worker')
 		QApplication.processEvents()
+
+	def _on_worker_finished_summary(self, success_count, fail_count):
+		# show single summary popup after worker finishes
+		msg = f"Completed: {success_count} success, {fail_count} failed"
+		QMessageBox.information(self, "Completed", msg)
+		# keep console logs as-is
 
 	def dragEnterEvent(self, event):
 		if event.mimeData().hasUrls():
