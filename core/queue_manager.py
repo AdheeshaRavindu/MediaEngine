@@ -2,7 +2,7 @@ from typing import Callable
 
 from PySide6.QtCore import QThread, Signal
 
-from models.job import Job
+from core.job import Job
 
 
 class QueueWorker(QThread):

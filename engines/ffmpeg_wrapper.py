@@ -89,3 +89,16 @@ def transcode_media(input_path: str, output_path: str) -> None:
     """Generic FFmpeg transcode based on output extension/container."""
     cmd = [get_tool_path("ffmpeg"), "-y", "-i", input_path, output_path]
     subprocess.run(cmd, check=True, capture_output=True, text=True)
+
+
+def normalize_audio(input_path: str, output_path: str) -> None:
+    cmd = [
+        get_tool_path("ffmpeg"),
+        "-y",
+        "-i",
+        input_path,
+        "-af",
+        "loudnorm=I=-16:TP=-1.5:LRA=11",
+        output_path,
+    ]
+    subprocess.run(cmd, check=True, capture_output=True, text=True)

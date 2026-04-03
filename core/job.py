@@ -13,3 +13,6 @@ class Job:
     video_preset: str = "balanced"
     resize_width: int = 1280
     resize_height: int = 720
+    enhance_mode: str | None = None
+    enhance_strength: int = 50
+    upscale_factor: int = 2

@@ -38,7 +38,6 @@ python app.py
 app.py
 core/
 engines/
-models/
 ui/
 tools/
 ```

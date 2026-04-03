@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QSpinBox,
     QSplitter,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -29,7 +30,7 @@ from core.metadata import run_reveal_metadata, run_strip_metadata
 from core.optimizer import run_optimize
 from core.queue_manager import QueueWorker
 from core.utils import detect_file_type
-from models.job import Job
+from core.job import Job
 
 
 class MainWindow(QMainWindow):
@@ -44,6 +45,13 @@ class MainWindow(QMainWindow):
     AUDIO_FORMATS = ["mp3", "wav", "aac", "flac", "ogg", "m4a"]
     VIDEO_FORMATS = ["mp4", "mkv", "avi", "mov", "webm"]
     OPTIMIZE_MODES = ["Compress", "Reduce PDF Size", "Batch Resize"]
+    ENHANCE_MODES = [
+        "Sharpen Image",
+        "Denoise Image",
+        "Upscale Image",
+        "Normalize Audio Volume",
+        "Improve Video Resolution (Coming Soon)",
+    ]
     VIDEO_PRESETS = [
         ("High Quality", "high_quality"),
         ("Balanced", "balanced"),
@@ -66,6 +74,13 @@ class MainWindow(QMainWindow):
         "Metadata-Free Export": {"action": "Metadata", "format": None, "metadata_mode": "Strip Metadata"},
     }
 
+    TAB_INDEX = {
+        "Convert": 0,
+        "Optimize": 1,
+        "Enhance": 2,
+        "Metadata": 3,
+    }
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("MediaEngine")
@@ -84,33 +99,43 @@ class MainWindow(QMainWindow):
         split = QSplitter(Qt.Orientation.Horizontal)
         main_layout.addWidget(split)
 
-        # Left sidebar
-        left = QWidget()
-        left_layout = QVBoxLayout(left)
-        left_layout.addWidget(QLabel("Modules"))
-        self.module_list = QListWidget()
-        for item in ["Convert", "Optimize", "Enhance", "Metadata", "Batch Jobs", "Settings"]:
-            self.module_list.addItem(item)
-        self.module_list.setCurrentRow(0)
-        left_layout.addWidget(self.module_list)
-        split.addWidget(left)
-
         # Center panel
         center = QWidget()
         center_layout = QVBoxLayout(center)
-        self.drop_label = QLabel("Drag and drop files here")
+        self.drop_label = QLabel("Drop Files Here\n\n(Drag and drop one or more files)")
         self.drop_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.drop_label.setStyleSheet("border: 2px dashed #666; padding: 24px; font-size: 14px;")
+        self.drop_label.setMinimumHeight(180)
+        self.drop_label.setStyleSheet(
+            "border: 2px dashed #4a4a4a;"
+            "border-radius: 10px;"
+            "padding: 28px;"
+            "font-size: 16px;"
+            "font-weight: 600;"
+            "background-color: rgba(255, 255, 255, 0.02);"
+        )
         center_layout.addWidget(self.drop_label)
+
+        add_section_label = QLabel("Add Files Section")
+        add_section_label.setStyleSheet("font-weight: 600; font-size: 13px;")
+        center_layout.addWidget(add_section_label)
+
+        add_hint = QLabel("Use the button below or drag files into the area above.")
+        add_hint.setStyleSheet("color: #888;")
+        center_layout.addWidget(add_hint)
+
+        add_row = QHBoxLayout()
+        self.btn_add = QPushButton("+ Add Files")
+        self.btn_add.setMinimumHeight(36)
+        add_row.addWidget(self.btn_add)
+        add_row.addStretch(1)
+        center_layout.addLayout(add_row)
 
         self.file_list = QListWidget()
         center_layout.addWidget(self.file_list)
 
         center_btns = QHBoxLayout()
-        self.btn_add = QPushButton("Add Files")
         self.btn_remove = QPushButton("Remove Selected")
         self.btn_clear = QPushButton("Clear")
-        center_btns.addWidget(self.btn_add)
         center_btns.addWidget(self.btn_remove)
         center_btns.addWidget(self.btn_clear)
         center_layout.addLayout(center_btns)
@@ -120,67 +145,31 @@ class MainWindow(QMainWindow):
         # Right panel
         right = QWidget()
         right_layout = QVBoxLayout(right)
-        right_layout.addWidget(QLabel("Smart Preset"))
+        self.preset_label = QLabel("Smart Preset")
+        right_layout.addWidget(self.preset_label)
         self.preset_combo = QComboBox()
         self.preset_combo.addItems(self.PRESETS)
         right_layout.addWidget(self.preset_combo)
 
-        right_layout.addWidget(QLabel("Action"))
-        self.action_combo = QComboBox()
-        self.action_combo.addItems(self.ACTIONS)
-        right_layout.addWidget(self.action_combo)
+        self.tabs = QTabWidget()
+        right_layout.addWidget(self.tabs)
 
-        right_layout.addWidget(QLabel("Output Format"))
-        self.format_combo = QComboBox()
-        self.format_combo.setEditable(True)
-        self.format_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        right_layout.addWidget(self.format_combo)
+        self.convert_tab = QWidget()
+        self.optimize_tab = QWidget()
+        self.enhance_tab = QWidget()
+        self.metadata_tab = QWidget()
 
-        right_layout.addWidget(QLabel("Metadata Mode"))
-        self.metadata_mode_combo = QComboBox()
-        self.metadata_mode_combo.addItems(["Reveal Metadata", "Strip Metadata"])
-        right_layout.addWidget(self.metadata_mode_combo)
+        self.tabs.addTab(self.convert_tab, "Convert")
+        self.tabs.addTab(self.optimize_tab, "Optimize")
+        self.tabs.addTab(self.enhance_tab, "Enhance")
+        self.tabs.addTab(self.metadata_tab, "Metadata")
 
-        right_layout.addWidget(QLabel("Optimize Mode"))
-        self.optimize_mode_combo = QComboBox()
-        self.optimize_mode_combo.addItems(self.OPTIMIZE_MODES)
-        right_layout.addWidget(self.optimize_mode_combo)
+        self._build_convert_tab()
+        self._build_optimize_tab()
+        self._build_enhance_tab()
+        self._build_metadata_tab()
 
-        right_layout.addWidget(QLabel("Image/PDF Quality (1-100)"))
-        self.image_quality_spin = QSpinBox()
-        self.image_quality_spin.setRange(1, 100)
-        self.image_quality_spin.setValue(80)
-        right_layout.addWidget(self.image_quality_spin)
-
-        right_layout.addWidget(QLabel("Video Codec Preset"))
-        self.video_preset_combo = QComboBox()
-        for label, key in self.VIDEO_PRESETS:
-            self.video_preset_combo.addItem(label, key)
-        right_layout.addWidget(self.video_preset_combo)
-
-        resize_row = QHBoxLayout()
-        resize_row.addWidget(QLabel("Resize W"))
-        self.resize_w_spin = QSpinBox()
-        self.resize_w_spin.setRange(16, 8192)
-        self.resize_w_spin.setValue(1280)
-        resize_row.addWidget(self.resize_w_spin)
-        resize_row.addWidget(QLabel("H"))
-        self.resize_h_spin = QSpinBox()
-        self.resize_h_spin.setRange(16, 8192)
-        self.resize_h_spin.setValue(720)
-        resize_row.addWidget(self.resize_h_spin)
-        right_layout.addLayout(resize_row)
-
-        # Searchable format dropdown (type to filter suggestions)
-        self.format_model = QStringListModel()
-        self.format_completer = QCompleter(self.format_model, self)
-        self.format_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self.format_completer.setFilterMode(Qt.MatchFlag.MatchContains)
-        self.format_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
-        self.format_combo.setCompleter(self.format_completer)
-        line_edit = self.format_combo.lineEdit()
-        if line_edit is not None:
-            line_edit.setPlaceholderText("Search format (e.g. mp4, webp, pdf)")
+        self.tabs.currentChanged.connect(self.on_tab_changed)
 
         right_layout.addWidget(QLabel("Output Folder"))
         self.output_label = QLabel(self.output_dir)
@@ -195,7 +184,7 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(self.log_box)
 
         split.addWidget(right)
-        split.setSizes([180, 560, 360])
+        split.setSizes([700, 400])
 
         # Bottom queue actions
         bottom = QHBoxLayout()
@@ -215,11 +204,119 @@ class MainWindow(QMainWindow):
         self.btn_output.clicked.connect(self.choose_output_folder)
         self.btn_start.clicked.connect(self.start_queue)
         self.btn_cancel.clicked.connect(self.cancel_queue)
-        self.action_combo.currentTextChanged.connect(self.on_action_changed)
+        self.optimize_mode_combo.currentTextChanged.connect(self.on_optimize_mode_changed)
+        self.enhance_mode_combo.currentTextChanged.connect(self.on_enhance_mode_changed)
         self.preset_combo.currentTextChanged.connect(self.on_preset_changed)
+        self.file_list.itemSelectionChanged.connect(self.on_file_selection_changed)
 
         self.refresh_format_options()
-        self.on_action_changed(self.action_combo.currentText())
+        self.refresh_optimize_options()
+        self.on_tab_changed(self.tabs.currentIndex())
+
+    def _build_convert_tab(self):
+        layout = QVBoxLayout(self.convert_tab)
+
+        self.format_label = QLabel("Output Format")
+        layout.addWidget(self.format_label)
+
+        self.format_combo = QComboBox()
+        self.format_combo.setEditable(True)
+        self.format_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        layout.addWidget(self.format_combo)
+
+        self.format_model = QStringListModel()
+        self.format_completer = QCompleter(self.format_model, self)
+        self.format_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.format_completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        self.format_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        self.format_combo.setCompleter(self.format_completer)
+        line_edit = self.format_combo.lineEdit()
+        if line_edit is not None:
+            line_edit.setPlaceholderText("Search format (e.g. mp4, webp, pdf)")
+
+        layout.addStretch(1)
+
+    def _build_optimize_tab(self):
+        layout = QVBoxLayout(self.optimize_tab)
+
+        self.optimize_mode_label = QLabel("Optimize Mode")
+        layout.addWidget(self.optimize_mode_label)
+
+        self.optimize_mode_combo = QComboBox()
+        self.optimize_mode_combo.addItems(self.OPTIMIZE_MODES)
+        layout.addWidget(self.optimize_mode_combo)
+
+        self.image_quality_label = QLabel("Image/PDF Quality (1-100)")
+        layout.addWidget(self.image_quality_label)
+        self.image_quality_spin = QSpinBox()
+        self.image_quality_spin.setRange(1, 100)
+        self.image_quality_spin.setValue(80)
+        layout.addWidget(self.image_quality_spin)
+
+        self.video_preset_label = QLabel("Video Codec Preset")
+        layout.addWidget(self.video_preset_label)
+        self.video_preset_combo = QComboBox()
+        for label, key in self.VIDEO_PRESETS:
+            self.video_preset_combo.addItem(label, key)
+        layout.addWidget(self.video_preset_combo)
+
+        resize_row = QHBoxLayout()
+        self.resize_w_label = QLabel("Resize W")
+        resize_row.addWidget(self.resize_w_label)
+        self.resize_w_spin = QSpinBox()
+        self.resize_w_spin.setRange(16, 8192)
+        self.resize_w_spin.setValue(1280)
+        resize_row.addWidget(self.resize_w_spin)
+        self.resize_h_label = QLabel("H")
+        resize_row.addWidget(self.resize_h_label)
+        self.resize_h_spin = QSpinBox()
+        self.resize_h_spin.setRange(16, 8192)
+        self.resize_h_spin.setValue(720)
+        resize_row.addWidget(self.resize_h_spin)
+        layout.addLayout(resize_row)
+
+        layout.addStretch(1)
+
+    def _build_enhance_tab(self):
+        layout = QVBoxLayout(self.enhance_tab)
+
+        self.enhance_mode_label = QLabel("Enhance Mode")
+        layout.addWidget(self.enhance_mode_label)
+
+        self.enhance_mode_combo = QComboBox()
+        self.enhance_mode_combo.addItems(self.ENHANCE_MODES)
+        layout.addWidget(self.enhance_mode_combo)
+
+        self.enhance_strength_label = QLabel("Strength (1-100)")
+        layout.addWidget(self.enhance_strength_label)
+        self.enhance_strength_spin = QSpinBox()
+        self.enhance_strength_spin.setRange(1, 100)
+        self.enhance_strength_spin.setValue(50)
+        layout.addWidget(self.enhance_strength_spin)
+
+        self.upscale_factor_label = QLabel("Upscale Factor")
+        layout.addWidget(self.upscale_factor_label)
+        self.upscale_factor_combo = QComboBox()
+        self.upscale_factor_combo.addItems(["2", "3", "4"])
+        layout.addWidget(self.upscale_factor_combo)
+
+        self.enhance_hint_label = QLabel("")
+        self.enhance_hint_label.setWordWrap(True)
+        layout.addWidget(self.enhance_hint_label)
+
+        layout.addStretch(1)
+
+    def _build_metadata_tab(self):
+        layout = QVBoxLayout(self.metadata_tab)
+
+        self.metadata_mode_label = QLabel("Metadata Mode")
+        layout.addWidget(self.metadata_mode_label)
+
+        self.metadata_mode_combo = QComboBox()
+        self.metadata_mode_combo.addItems(["Reveal Metadata", "Strip Metadata"])
+        layout.addWidget(self.metadata_mode_combo)
+
+        layout.addStretch(1)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -251,6 +348,8 @@ class MainWindow(QMainWindow):
         if added:
             self.log(f"Added {added} file(s)")
             self.refresh_format_options()
+            self.refresh_optimize_options()
+            self.update_feature_visibility()
 
     def remove_selected(self):
         for item in self.file_list.selectedItems():
@@ -259,11 +358,15 @@ class MainWindow(QMainWindow):
                 self.files.remove(path)
             self.file_list.takeItem(self.file_list.row(item))
         self.refresh_format_options()
+        self.refresh_optimize_options()
+        self.update_feature_visibility()
 
     def clear_files(self):
         self.files.clear()
         self.file_list.clear()
         self.refresh_format_options()
+        self.refresh_optimize_options()
+        self.update_feature_visibility()
 
     def choose_output_folder(self):
         selected = QFileDialog.getExistingDirectory(self, "Choose output folder", self.output_dir)
@@ -271,11 +374,31 @@ class MainWindow(QMainWindow):
             self.output_dir = selected
             self.output_label.setText(selected)
 
+    def current_action(self) -> str:
+        return self.tabs.tabText(self.tabs.currentIndex())
+
+    def selected_or_all_paths(self) -> list[str]:
+        selected_items = self.file_list.selectedItems()
+        if selected_items:
+            return [item.data(Qt.ItemDataRole.UserRole) for item in selected_items]
+        return list(self.files)
+
+    def allowed_formats_for_type(self, source_type: str) -> set[str]:
+        if source_type in {"image", "pdf"}:
+            return set(self.IMAGE_FORMATS)
+        if source_type in {"audio", "video"}:
+            # FFmpeg transcode path supports audio and video targets for both.
+            return set(self.AUDIO_FORMATS + self.VIDEO_FORMATS)
+        return set()
+
     def build_jobs(self) -> list[Job]:
-        action = self.action_combo.currentText()
+        action = self.current_action()
         selected_format = self.format_combo.currentText().strip().lower()
-        output_format = None if selected_format == "Auto" else selected_format
+        output_format = None if not selected_format or selected_format == "Auto" else selected_format
         metadata_mode = self.metadata_mode_combo.currentText()
+        enhance_mode = self.enhance_mode_combo.currentText()
+        enhance_strength = self.enhance_strength_spin.value()
+        upscale_factor = int(self.upscale_factor_combo.currentText())
         optimize_mode_label = self.optimize_mode_combo.currentText()
         optimize_mode = {
             "Compress": "compress",
@@ -291,6 +414,8 @@ class MainWindow(QMainWindow):
             output_format = None
         if action != "Metadata":
             metadata_mode = None
+        if action != "Enhance":
+            enhance_mode = None
         if action != "Optimize":
             optimize_mode = None
         return [
@@ -300,6 +425,9 @@ class MainWindow(QMainWindow):
                 output_dir=self.output_dir,
                 output_format=output_format,
                 metadata_mode=metadata_mode,
+                enhance_mode=enhance_mode,
+                enhance_strength=enhance_strength,
+                upscale_factor=upscale_factor,
                 optimize_mode=optimize_mode,
                 image_quality=image_quality,
                 video_preset=video_preset,
@@ -323,26 +451,43 @@ class MainWindow(QMainWindow):
                 resize_height=job.resize_height,
             )
         if job.action == "Enhance":
-            return run_enhance(job.input_path, job.output_dir)
+            return run_enhance(
+                job.input_path,
+                job.output_dir,
+                enhance_mode=job.enhance_mode or "Sharpen Image",
+                enhance_strength=job.enhance_strength,
+                upscale_factor=job.upscale_factor,
+            )
         if job.action == "Metadata":
             if job.metadata_mode == "Reveal Metadata":
-                return run_reveal_metadata(job.input_path)
+                return run_reveal_metadata(job.input_path, job.output_dir)
             return run_strip_metadata(job.input_path, job.output_dir)
         raise ValueError(f"Unknown action: {job.action}")
 
-    def on_action_changed(self, action: str):
-        convert_mode = action == "Convert"
-        metadata_mode = action == "Metadata"
-        optimize_mode = action == "Optimize"
-        self.format_combo.setEnabled(convert_mode)
-        self.metadata_mode_combo.setEnabled(metadata_mode)
-        self.optimize_mode_combo.setEnabled(optimize_mode)
-        self.image_quality_spin.setEnabled(optimize_mode)
-        self.video_preset_combo.setEnabled(optimize_mode)
-        self.resize_w_spin.setEnabled(optimize_mode)
-        self.resize_h_spin.setEnabled(optimize_mode)
-        if convert_mode:
+    def on_tab_changed(self, index: int):
+        self.update_feature_visibility()
+        if self.current_action() == "Convert":
             self.refresh_format_options()
+        if self.current_action() == "Optimize":
+            self.refresh_optimize_options()
+
+    def on_file_selection_changed(self):
+        # Aggressive filtering: when specific files are selected, filter options by those files only.
+        if self.current_action() == "Convert":
+            self.refresh_format_options()
+        if self.current_action() == "Optimize":
+            self.refresh_optimize_options()
+        self.update_feature_visibility()
+
+    def on_action_changed(self, action: str):
+        if action in self.TAB_INDEX:
+            self.tabs.setCurrentIndex(self.TAB_INDEX[action])
+
+    def on_optimize_mode_changed(self, mode: str):
+        self.update_feature_visibility()
+
+    def on_enhance_mode_changed(self, mode: str):
+        self.update_feature_visibility()
 
     def on_preset_changed(self, preset_name: str):
         config = self.PRESET_CONFIG.get(preset_name, self.PRESET_CONFIG["Custom"])
@@ -351,38 +496,58 @@ class MainWindow(QMainWindow):
         preset_metadata_mode = config.get("metadata_mode")
 
         if preset_action:
-            self.action_combo.setCurrentText(preset_action)
+            if preset_action in self.TAB_INDEX:
+                self.tabs.setCurrentIndex(self.TAB_INDEX[preset_action])
 
         self.refresh_format_options()
 
-        if preset_format and self.action_combo.currentText() == "Convert":
+        if preset_format and self.current_action() == "Convert":
             available = [self.format_combo.itemText(i) for i in range(self.format_combo.count())]
             if preset_format in available:
                 self.format_combo.setCurrentText(preset_format)
             else:
                 self.format_combo.setCurrentText("Auto")
-        elif self.action_combo.currentText() == "Convert":
+        elif self.current_action() == "Convert":
             self.format_combo.setCurrentText("Auto")
 
-        if preset_metadata_mode and self.action_combo.currentText() == "Metadata":
+        if preset_metadata_mode and self.current_action() == "Metadata":
             self.metadata_mode_combo.setCurrentText(preset_metadata_mode)
-        elif self.action_combo.currentText() == "Metadata":
+        elif self.current_action() == "Metadata":
             self.metadata_mode_combo.setCurrentText("Reveal Metadata")
 
+        self.update_feature_visibility()
         self.log(f"Preset selected: {preset_name}")
 
     def refresh_format_options(self):
-        options = ["Auto"]
-        detected = {detect_file_type(p) for p in self.files}
-        if not detected:
-            detected = {"image", "audio", "video", "pdf"}
+        # Keep dropdown tightly scoped to Convert mode.
+        if self.current_action() != "Convert":
+            return
 
-        if "image" in detected or "pdf" in detected:
-            options.extend(self.IMAGE_FORMATS)
-        if "audio" in detected:
-            options.extend(self.AUDIO_FORMATS)
-        if "video" in detected:
-            options.extend(self.VIDEO_FORMATS)
+        options = ["Auto"]
+
+        paths = self.selected_or_all_paths()
+        detected = [detect_file_type(p) for p in paths if p]
+        detected = [t for t in detected if t in {"image", "audio", "video", "pdf"}]
+
+        if not detected:
+            detected = ["image", "audio", "video", "pdf"]
+
+        allowed_sets = [self.allowed_formats_for_type(t) for t in detected]
+        allowed_sets = [s for s in allowed_sets if s]
+
+        # Aggressive rule: show formats compatible with ALL selected files.
+        if allowed_sets:
+            common = set.intersection(*allowed_sets)
+        else:
+            common = set()
+
+        if not common and allowed_sets:
+            # If no intersection exists for mixed file families, fall back to the first family
+            # so the dropdown remains useful while still narrowed.
+            common = allowed_sets[0]
+
+        ordered_pool = self.IMAGE_FORMATS + self.AUDIO_FORMATS + self.VIDEO_FORMATS
+        options.extend([fmt for fmt in ordered_pool if fmt in common])
 
         # Keep order, remove duplicates
         deduped = list(dict.fromkeys(options))
@@ -397,7 +562,104 @@ class MainWindow(QMainWindow):
         if current and current in deduped:
             self.format_combo.setCurrentText(current)
         else:
-            self.format_combo.setCurrentText("Auto")
+            self.format_combo.setCurrentIndex(-1)
+            line_edit = self.format_combo.lineEdit()
+            if line_edit is not None:
+                line_edit.clear()
+
+    def refresh_optimize_options(self):
+        detected = {detect_file_type(p) for p in self.files}
+        if not detected:
+            detected = {"image", "audio", "video", "pdf"}
+
+        options = []
+        if "image" in detected or "video" in detected:
+            options.extend(["Compress", "Batch Resize"])
+        if "pdf" in detected:
+            options.append("Reduce PDF Size")
+
+        if not options:
+            options = ["No optimize options"]
+
+        current = self.optimize_mode_combo.currentText()
+        self.optimize_mode_combo.blockSignals(True)
+        self.optimize_mode_combo.clear()
+        self.optimize_mode_combo.addItems(list(dict.fromkeys(options)))
+        self.optimize_mode_combo.blockSignals(False)
+
+        if current in options:
+            self.optimize_mode_combo.setCurrentText(current)
+        else:
+            self.optimize_mode_combo.setCurrentIndex(0)
+
+    def update_feature_visibility(self):
+        detected = {detect_file_type(p) for p in self.files}
+        if not detected:
+            detected = {"image", "audio", "video", "pdf"}
+
+        action = self.current_action()
+        optimize_mode = self.optimize_mode_combo.currentText()
+        enhance_mode = self.enhance_mode_combo.currentText()
+
+        show_quality = False
+        show_video_preset = False
+        show_resize = False
+
+        if action == "Optimize":
+            if optimize_mode == "Compress":
+                show_quality = "image" in detected or "pdf" in detected
+                show_video_preset = "video" in detected
+            elif optimize_mode == "Reduce PDF Size":
+                show_quality = "pdf" in detected
+            elif optimize_mode == "Batch Resize":
+                show_resize = "image" in detected or "video" in detected
+
+        self.image_quality_label.setVisible(action == "Optimize" and show_quality)
+        self.image_quality_spin.setVisible(action == "Optimize" and show_quality)
+
+        self.video_preset_label.setVisible(action == "Optimize" and show_video_preset)
+        self.video_preset_combo.setVisible(action == "Optimize" and show_video_preset)
+
+        self.resize_w_label.setVisible(action == "Optimize" and show_resize)
+        self.resize_w_spin.setVisible(action == "Optimize" and show_resize)
+        self.resize_h_label.setVisible(action == "Optimize" and show_resize)
+        self.resize_h_spin.setVisible(action == "Optimize" and show_resize)
+
+        enhance_visible = action == "Enhance"
+        image_modes = {"Sharpen Image", "Denoise Image"}
+        is_upscale = enhance_mode == "Upscale Image"
+        is_audio_norm = enhance_mode == "Normalize Audio Volume"
+        is_video_later = enhance_mode == "Improve Video Resolution (Coming Soon)"
+
+        self.enhance_mode_label.setVisible(enhance_visible)
+        self.enhance_mode_combo.setVisible(enhance_visible)
+        self.enhance_strength_label.setVisible(enhance_visible and enhance_mode in image_modes)
+        self.enhance_strength_spin.setVisible(enhance_visible and enhance_mode in image_modes)
+        self.upscale_factor_label.setVisible(enhance_visible and is_upscale)
+        self.upscale_factor_combo.setVisible(enhance_visible and is_upscale)
+
+        if enhance_visible and enhance_mode in image_modes and "image" not in detected:
+            self.enhance_hint_label.setText("This mode requires image files.")
+            self.enhance_hint_label.setVisible(True)
+        elif enhance_visible and is_upscale and "image" not in detected:
+            self.enhance_hint_label.setText("Upscale requires image files.")
+            self.enhance_hint_label.setVisible(True)
+        elif enhance_visible and is_audio_norm and not ({"audio", "video"} & detected):
+            self.enhance_hint_label.setText("Normalize audio volume requires audio/video files.")
+            self.enhance_hint_label.setVisible(True)
+        elif enhance_visible and is_video_later:
+            self.enhance_hint_label.setText("Improve Video Resolution will be added later.")
+            self.enhance_hint_label.setVisible(True)
+        else:
+            self.enhance_hint_label.setVisible(False)
+
+        # Convert and Metadata tabs already isolate their controls; only the relevant options inside them remain.
+        self.format_label.setVisible(action == "Convert")
+        self.format_combo.setVisible(action == "Convert")
+        self.metadata_mode_label.setVisible(action == "Metadata")
+        self.metadata_mode_combo.setVisible(action == "Metadata")
+        self.optimize_mode_label.setVisible(action == "Optimize")
+        self.optimize_mode_combo.setVisible(action == "Optimize")
 
     def start_queue(self):
         jobs = self.build_jobs()
