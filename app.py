@@ -276,6 +276,8 @@ class DropWindow(QWidget):
 			self.status_label.setText("Cancelled")
 		else:
 			self.status_label.setText("Done")
+			# show success popup
+			QMessageBox.information(self, "Success", "Operation completed successfully")
 		QApplication.processEvents()
 		# reset progress
 		self.progress_bar.setValue(0)
