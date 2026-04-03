@@ -47,6 +47,7 @@ class MainWindow(QMainWindow):
     IMAGE_FORMATS = ["png", "jpg", "jpeg", "webp", "bmp", "tiff", "pdf"]
     AUDIO_FORMATS = ["mp3", "wav", "aac", "flac", "ogg", "m4a"]
     VIDEO_FORMATS = ["mp4", "mkv", "avi", "mov", "webm"]
+    DOCUMENT_FORMATS = ["doc", "docx", "docm", "dot", "dotx", "dotm", "rtf", "odt"]
     OPTIMIZE_MODES = ["Compress", "Reduce PDF Size", "Batch Resize"]
     ENHANCE_MODES = [
         "Sharpen Image",
@@ -381,18 +382,29 @@ class MainWindow(QMainWindow):
         layout.addStretch(1)
 
     def refresh_runtime_status(self):
-        checks = [
+        required_checks = [
             ("ffmpeg", is_tool_available("ffmpeg")),
             ("ImageMagick", is_tool_available("magick")),
             ("ExifTool", is_tool_available("exiftool")),
             ("yt-dlp", is_python_module_available("yt_dlp")),
+            ("python-docx", is_python_module_available("docx")),
         ]
-        missing = [name for name, ok in checks if not ok]
+        optional_checks = [
+            ("LibreOffice", is_tool_available("soffice") or is_tool_available("libreoffice")),
+        ]
+
+        missing = [name for name, ok in required_checks if not ok]
+        optional_missing = [name for name, ok in optional_checks if not ok]
         if missing:
             self.runtime_status_label.setText("Missing runtime dependencies: " + ", ".join(missing))
             self.runtime_status_label.setStyleSheet("font-size: 12px; color: #ffb3b3;")
         else:
-            self.runtime_status_label.setText("Runtime dependencies detected: ffmpeg, ImageMagick, ExifTool, yt-dlp")
+            message = "Runtime dependencies detected: ffmpeg, ImageMagick, ExifTool, yt-dlp, python-docx"
+            if optional_missing:
+                message += " | Optional for Word conversions: LibreOffice"
+            else:
+                message += " | Word conversions enabled"
+            self.runtime_status_label.setText(message)
             self.runtime_status_label.setStyleSheet("font-size: 12px; color: #bff0bf;")
 
     def load_settings(self):
@@ -552,6 +564,20 @@ class MainWindow(QMainWindow):
                 if target_format and target_format != "auto":
                     if target_format not in self.allowed_formats_for_type(file_type):
                         return f"{Path(job.input_path).name} cannot be converted to {target_format}."
+                    if file_type == "document" and target_format in self.IMAGE_FORMATS:
+                        if not (is_tool_available("soffice") or is_tool_available("libreoffice")):
+                            return "LibreOffice is required for Word to image conversion."
+                    if file_type == "document" and target_format == "pdf":
+                        has_libreoffice = is_tool_available("soffice") or is_tool_available("libreoffice")
+                        if not has_libreoffice and not is_python_module_available("docx2pdf"):
+                            return "Install LibreOffice, or install docx2pdf (with Microsoft Word) for DOCX to PDF."
+                    if file_type in {"image", "pdf"} and target_format == "docx":
+                        if not is_python_module_available("docx"):
+                            return "python-docx is required for image or PDF to Word conversion."
+                elif file_type == "document":
+                    has_libreoffice = is_tool_available("soffice") or is_tool_available("libreoffice")
+                    if not has_libreoffice and not is_python_module_available("docx2pdf"):
+                        return "Word to PDF requires LibreOffice, or docx2pdf with Microsoft Word."
             elif job.action == "Optimize":
                 if job.optimize_mode == "compress" and file_type not in {"image", "video"}:
                     return f"Compress supports image/video files only: {Path(job.input_path).name}"
@@ -572,7 +598,9 @@ class MainWindow(QMainWindow):
 
     def allowed_formats_for_type(self, source_type: str) -> set[str]:
         if source_type in {"image", "pdf"}:
-            return set(self.IMAGE_FORMATS)
+            return set(self.IMAGE_FORMATS + ["docx"])
+        if source_type == "document":
+            return set(self.IMAGE_FORMATS + self.DOCUMENT_FORMATS)
         if source_type in {"audio", "video"}:
             # FFmpeg transcode path supports audio and video targets for both.
             return set(self.AUDIO_FORMATS + self.VIDEO_FORMATS)
@@ -765,7 +793,7 @@ class MainWindow(QMainWindow):
             # so the dropdown remains useful while still narrowed.
             common = allowed_sets[0]
 
-        ordered_pool = self.IMAGE_FORMATS + self.AUDIO_FORMATS + self.VIDEO_FORMATS
+        ordered_pool = self.IMAGE_FORMATS + self.AUDIO_FORMATS + self.VIDEO_FORMATS + self.DOCUMENT_FORMATS
         options.extend([fmt for fmt in ordered_pool if fmt in common])
 
         # Keep order, remove duplicates

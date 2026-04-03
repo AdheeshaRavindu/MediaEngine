@@ -36,6 +36,44 @@ class CoreWorkflowTests(TestCase):
         self.assertEqual(result, "/tmp/output.mp4")
         transcode_media.assert_called_once_with("input.mov", "/tmp/output.mp4")
 
+    @mock.patch("core.converter._convert_with_office", return_value="/tmp/output.pdf")
+    @mock.patch("core.converter.detect_file_type", return_value="document")
+    @mock.patch("core.converter.is_tool_available", return_value=True)
+    def test_run_convert_routes_word_document_to_pdf(self, tool_available, detect_type, convert_with_office):
+        result = run_convert("input.docx", "/tmp", "pdf")
+
+        self.assertEqual(result, "/tmp/output.pdf")
+        convert_with_office.assert_called_once_with("input.docx", "/tmp", "pdf")
+
+    @mock.patch("core.converter._pdf_or_image_to_docx", return_value="/tmp/output.docx")
+    @mock.patch("core.converter.detect_file_type", return_value="image")
+    def test_run_convert_routes_image_to_docx(self, detect_type, pdf_or_image_to_docx):
+        result = run_convert("input.png", "/tmp", "docx")
+
+        self.assertEqual(result, "/tmp/output.docx")
+        pdf_or_image_to_docx.assert_called_once_with("input.png", "/tmp")
+
+    @mock.patch("core.converter._image_files_to_docx", return_value="/tmp/output.docx")
+    @mock.patch("core.converter._pdf_to_images", return_value="/tmp/pdf_pages")
+    @mock.patch("core.converter.detect_file_type", return_value="pdf")
+    @mock.patch("core.converter.Path.glob")
+    def test_run_convert_pdf_to_docx_uses_generated_pages_folder(self, glob_mock, detect_type, pdf_to_images, image_files_to_docx):
+        glob_mock.return_value = [Path("/tmp/pdf_pages/page-001.png")]
+
+        result = run_convert("input.pdf", "/tmp", "docx")
+
+        self.assertEqual(result, "/tmp/output.docx")
+        pdf_to_images.assert_called_once()
+        image_files_to_docx.assert_called_once()
+
+    @mock.patch("core.converter._pdf_to_images", return_value="/tmp/pages_png")
+    @mock.patch("core.converter.detect_file_type", return_value="pdf")
+    def test_run_convert_routes_pdf_to_image_folder(self, detect_type, pdf_to_images):
+        result = run_convert("input.pdf", "/tmp", "png")
+
+        self.assertEqual(result, "/tmp/pages_png")
+        pdf_to_images.assert_called_once_with("input.pdf", "/tmp", "png")
+
     @mock.patch("core.optimizer.imagemagick_wrapper.reduce_pdf_size")
     @mock.patch("core.optimizer.detect_file_type", return_value="image")
     def test_run_optimize_rejects_wrong_type_for_pdf_reduce(self, detect_type, reduce_pdf_size):

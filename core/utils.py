@@ -8,6 +8,7 @@ from pathlib import Path
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".tif"}
 AUDIO_EXTS = {".mp3", ".wav", ".aac", ".flac", ".ogg", ".m4a"}
 VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".webm"}
+DOCUMENT_EXTS = {".doc", ".docx", ".docm", ".dot", ".dotx", ".dotm", ".rtf", ".odt"}
 
 
 def detect_file_type(path: str) -> str:
@@ -20,6 +21,8 @@ def detect_file_type(path: str) -> str:
         return "video"
     if ext == ".pdf":
         return "pdf"
+    if ext in DOCUMENT_EXTS:
+        return "document"
     return "unknown"
 
 
@@ -89,3 +92,9 @@ def build_output_path(input_path: str, output_dir: str, suffix: str, new_ext: st
     ext = new_ext if new_ext else src.suffix
     base_name = sanitize_filename(src.stem)
     return unique_path(str(Path(output_dir) / f"{base_name}{suffix}{ext}"))
+
+
+def build_output_folder(input_path: str, output_dir: str, suffix: str) -> str:
+    src = Path(input_path)
+    base_name = sanitize_filename(src.stem)
+    return unique_path(str(Path(output_dir) / f"{base_name}{suffix}"))

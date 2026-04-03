@@ -28,9 +28,11 @@ Ensure external tools are available in `PATH`:
 - `ffmpeg`
 - `magick`
 - `exiftool`
+- `soffice` or `libreoffice` for Word document conversions
 
 YouTube downloads use `yt-dlp` and ffmpeg.
 The app now performs a startup health check for those dependencies and shows missing items in the UI.
+Word/PDF/image round-trips use LibreOffice plus `python-docx`.
 
 ## Run
 ```bash
