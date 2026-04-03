@@ -15,12 +15,21 @@ class Worker(QThread):
 		super().__init__()
 		# share the queue list reference; main thread may append while worker runs
 		self.queue = queue
+		self.is_cancelled = False
+
+	def cancel(self):
+		"""Request cancellation from the main thread."""
+		self.is_cancelled = True
 
 	def run(self):
 		processed = 0
 		# initial maximum
 		self.set_max.emit(len(self.queue) if len(self.queue) > 0 else 1)
 		while True:
+			# check cancellation before starting next job
+			if self.is_cancelled:
+				self.status.emit("Cancelled")
+				break
 			if not self.queue:
 				break
 			job = self.queue.pop(0)
@@ -42,6 +51,10 @@ class Worker(QThread):
 				print(f"Error processing {path}: {exc}")
 			processed += 1
 			self.progress.emit(processed)
+			# check cancellation after finishing current job
+			if self.is_cancelled:
+				self.status.emit("Cancelled")
+				break
 		# signal finished
 		self.finished.emit()
 
@@ -164,17 +177,20 @@ class DropWindow(QWidget):
 		self.btn_view_meta = QPushButton("View Metadata")
 		self.btn_remove_meta = QPushButton("Remove Metadata")
 		self.btn_process_queue = QPushButton("Process Queue")
+		self.btn_cancel = QPushButton("Cancel")
 		# add buttons to layout
 		h_buttons.addWidget(self.btn_convert)
 		h_buttons.addWidget(self.btn_compress)
 		h_buttons.addWidget(self.btn_view_meta)
 		h_buttons.addWidget(self.btn_remove_meta)
 		h_buttons.addWidget(self.btn_process_queue)
+		h_buttons.addWidget(self.btn_cancel)
 		self.btn_convert.clicked.connect(self.handle_convert_clicked)
 		self.btn_compress.clicked.connect(self.handle_compress_clicked)
 		self.btn_view_meta.clicked.connect(self.handle_view_metadata_clicked)
 		self.btn_remove_meta.clicked.connect(self.handle_remove_metadata_clicked)
 		self.btn_process_queue.clicked.connect(self.process_queue)
+		self.btn_cancel.clicked.connect(self.handle_cancel_clicked)
 		# buttons visible by default
 		layout.addLayout(h_buttons)
 
@@ -236,7 +252,11 @@ class DropWindow(QWidget):
 
 	def _on_worker_finished(self):
 		self.is_processing = False
-		self.status_label.setText("Done")
+		# show Cancelled if worker was cancelled, otherwise Done
+		if hasattr(self, 'worker') and getattr(self.worker, 'is_cancelled', False):
+			self.status_label.setText("Cancelled")
+		else:
+			self.status_label.setText("Done")
 		QApplication.processEvents()
 		# reset progress
 		self.progress_bar.setValue(0)
@@ -309,6 +329,18 @@ class DropWindow(QWidget):
 		else:
 			self.progress_bar.setMaximum(self.progress_bar.maximum() + added)
 			QApplication.processEvents()
+
+	def handle_cancel_clicked(self):
+		# request worker cancellation if running
+		if hasattr(self, 'worker') and getattr(self, 'worker', None) is not None:
+			if self.worker.isRunning():
+				self.worker.cancel()
+				self.status_label.setText('Cancelling...')
+				QApplication.processEvents()
+				return
+		# no active worker
+		self.status_label.setText('No active worker')
+		QApplication.processEvents()
 
 	def dragEnterEvent(self, event):
 		if event.mimeData().hasUrls():
